@@ -11,9 +11,11 @@ A reatime path tracer written in taichi
 * Ray-Sphere intersection
 * Unbiasd russain roule 
 * Antialiasing via super-sampling
-* Multiple importance sampling 
-  * cosine-weighted pdf
+* Multiple Importance Sampling
+  * Balance heuristic 
+  * Cosine-weighted pdf
   * ggx normal weighted pdf 
+* Gamma correction of final result
 
 #### Usage
 
@@ -22,4 +24,5 @@ pip3 install taichi
 python3 pt.py
 ```
 
-and you a ready to go, **press and drag the mouse to see different rendering result**
+and you a ready to go.
+To see a interactive result **zoom in/out, press and drag the mouse to see different rendering result from different camera position**

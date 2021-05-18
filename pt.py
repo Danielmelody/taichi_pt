@@ -105,11 +105,11 @@ spheres.from_numpy(
     albedos=np.array([[1.0, 0.8, 0.2],
                       [1.0, 1.0, 1.0],
                       [0.0, 0.0, 0.0],
-                      [1.0, 1.0, 0.6]]).astype(np.float32),
-    emissions=np.array([[0, 0, 0], [0, 0, 0], [5, 5, 5],
+                      [1.0, 0.8, 0.6]]).astype(np.float32),
+    emissions=np.array([[0, 0, 0], [0, 0, 0], [25, 25, 25],
                         [0, 0, 0]]).astype(np.float32),
-    roughness=np.array([0.3, 0.0, 0.0, 0.9]).astype(np.float32),
-    metallics=np.array([1.0, 0.0, 0.8, 0.2]).astype(np.float32),
+    roughness=np.array([0.3, 0.0, 0.0, 0.5]).astype(np.float32),
+    metallics=np.array([1.0, 0.0, 0.8, 0.9]).astype(np.float32),
     iors=np.array([2.495, 1.4, 2.0, 2.90]).astype(np.float32),
 )
 
@@ -277,7 +277,7 @@ def trace(sample: ti.u32):
                 albedo = spheres.albedos[sp_index]
                 metallic = spheres.metallics[sp_index]
                 ior = spheres.iors[sp_index]
-                roughness = ti.max(0.04, spheres.roughness[sp_index])
+                roughness = ti.max(0.0, spheres.roughness[sp_index])
                 f0 = (1.0 - ior) / (1.0 + ior)
                 f0 = f0 * f0
                 f0 = lerp(f0, luma(albedo), metallic)
@@ -361,6 +361,12 @@ def try_reset(t):
             camera_pos[2] = math.sin(
                 rotateY) * y + math.cos(rotateY) * z
             camera_pos[0] = x
+            return True
+
+        if e.key == gui.WHEEL:
+            dt = e.delta[1] / 1000.0
+            for i in range(3):
+                camera_pos[i] *= (1.0 + dt)
             return True
 
     return False
