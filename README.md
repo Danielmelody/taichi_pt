@@ -2,7 +2,7 @@
 
 ![](result.png)
 
-A reatime path tracer written in taichi
+A reatime path tracer written in [taichi](https://github.com/taichi-dev/taichi)
 
 #### Features:
 * Global illumination via unbiased Monte Carlo path tracing
