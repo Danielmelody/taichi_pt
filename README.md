@@ -2,9 +2,9 @@
 
 ![](result.png)
 
-a path tracer written in taichi
+A reatime path tracer written in taichi
 
-features:
+#### Features:
 * Global illumination via unbiased Monte Carlo path tracing
 * Physically based Specular shading(GGX)
 * Lambert diffuse shading
@@ -15,3 +15,11 @@ features:
   * cosine-weighted pdf
   * ggx normal weighted pdf 
 
+#### Usage
+
+```bash
+pip3 install taichi
+python3 pt.py
+```
+
+and you a ready to go, **press and drag the mouse to see different rendering result**
