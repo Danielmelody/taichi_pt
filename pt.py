@@ -135,22 +135,22 @@ def cubemap_coord(dir):
     coor = ti.Vector([0., 0.])
     if dir.z >= 0 and dir.z >= abs(dir.y) - eps and dir.z >= abs(dir.x) - eps:
         coor = ti.Vector([3 / 8, 1 / 2]) + \
-            ti.Vector([dir.x, dir.y]) / dir.z / 8
+            ti.Vector([dir.x / 8, dir.y / 6]) / dir.z
     if dir.z <= 0 and -dir.z >= abs(dir.y) - eps and -dir.z >= abs(dir.x) - eps:
         coor = ti.Vector([7 / 8, 1 / 2]) + \
-            ti.Vector([-dir.x, dir.y]) / -dir.z / 8
+            ti.Vector([-dir.x / 8, dir.y / 6]) / -dir.z
     if dir.x <= 0 and -dir.x >= abs(dir.y) - eps and -dir.x >= abs(dir.z) - eps:
         coor = ti.Vector([1 / 8, 1 / 2]) + \
-            ti.Vector([dir.z, dir.y]) / -dir.x / 8
+            ti.Vector([dir.z / 8, dir.y / 6]) / -dir.x
     if dir.x >= 0 and dir.x >= abs(dir.y) - eps and dir.x >= abs(dir.z) - eps:
         coor = ti.Vector([5 / 8, 1 / 2]) + \
-            ti.Vector([-dir.z, dir.y]) / dir.x / 8
+            ti.Vector([-dir.z / 8, dir.y / 6]) / dir.x
     if dir.y >= 0 and dir.y >= abs(dir.x) - eps and dir.y >= abs(dir.z) - eps:
         coor = ti.Vector([3 / 8, 5 / 6]) + \
-            ti.Vector([dir.x, -dir.z]) / dir.y / 8
+            ti.Vector([dir.x / 8, -dir.z / 6]) / dir.y
     if dir.y <= 0 and -dir.y >= abs(dir.x) - eps and -dir.y >= abs(dir.z) - eps:
         coor = ti.Vector([3 / 8, 1 / 6]) + \
-            ti.Vector([dir.x, dir.z]) / -dir.y / 8
+            ti.Vector([dir.x / 8, dir.z / 6]) / -dir.y
     return coor
 
 
