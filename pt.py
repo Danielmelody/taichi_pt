@@ -39,9 +39,9 @@ def tex2d(tex_field, uv):
 
 @ti.data_oriented
 class Spheres:
-    def from_numpy(self, center_radius_np, albedos, emissions, roughness, metallics, iors):
+    def from_numpy(self, center_radius, albedos, emissions, roughness, metallics, iors):
         self.center_radius = ti.Vector.field(
-            4, dtype=ti.f32, shape=center_radius_np.shape[:1])
+            4, dtype=ti.f32, shape=center_radius.shape[:1])
         self.albedos = ti.Vector.field(
             3, dtype=ti.f32, shape=albedos.shape[:1])
         self.emissions = ti.Vector.field(
@@ -53,7 +53,7 @@ class Spheres:
         self.iors = ti.field(
             dtype=ti.f32, shape=iors.shape[:1])
 
-        self.center_radius.from_numpy(center_radius_np)
+        self.center_radius.from_numpy(center_radius)
         self.albedos.from_numpy(albedos)
         self.emissions.from_numpy(emissions)
         self.roughness.from_numpy(roughness)
@@ -65,7 +65,7 @@ class Spheres:
         min_t = inf
         min_index = -1
         sp_index = 0
-        for i in ti.ndrange(4):
+        for i in ti.ndrange(5):
             c_r = self.center_radius[i]
             r = c_r[3]
             p = ti.Vector([c_r[0], c_r[1], c_r[2]])
@@ -98,19 +98,22 @@ last_camera_pos = ti.field(ti.f32, 3)
 camera_pos = ti.field(ti.f32, 3)
 
 spheres.from_numpy(
-    np.array([[-2. + eps, 0., -3., 2.5],
-              [1.0, -1.5 + eps, 1.0, 1.],
-             [0., 2., 0., 0.5],
-             [0., -500., 0., 497.5]]).astype(np.float32),
+    center_radius=np.array([
+        [-2., 0.0, -3., 2.5],
+        [1.0, -1.5, 1.0, 1.],
+        [0.0, 2., 0., 0.5],
+        [0.0, -500., 0., 497.5],
+        [-1, -2.0, 0.5, 0.5]]).astype(np.float32),
     albedos=np.array([[1.0, 0.8, 0.2],
                       [1.0, 1.0, 1.0],
                       [0.0, 0.0, 0.0],
-                      [1.0, 0.8, 0.6]]).astype(np.float32),
-    emissions=np.array([[0, 0, 0], [0, 0, 0], [25, 25, 25],
-                        [0, 0, 0]]).astype(np.float32),
-    roughness=np.array([0.3, 0.0, 0.0, 0.5]).astype(np.float32),
-    metallics=np.array([1.0, 0.0, 0.8, 0.9]).astype(np.float32),
-    iors=np.array([2.495, 1.4, 2.0, 2.90]).astype(np.float32),
+                      [1.0, 0.8, 0.6],
+                      [1.0, 1.0, 1.0]]).astype(np.float32),
+    emissions=np.array([[0, 0, 0], [0, 0, 0], [15, 15, 15], [
+                       0, 0, 0], [0, 0, 0]]).astype(np.float32),
+    roughness=np.array([0.3, 0.0, 0.0, 0.5, 0.0]).astype(np.float32),
+    metallics=np.array([1.0, 0.0, 0.8, 0.9, 1.0]).astype(np.float32),
+    iors=np.array([0.495, 1.4, 2.0, 2.90, 2.5]).astype(np.float32),
 )
 
 skybox.load()
@@ -277,7 +280,7 @@ def trace(sample: ti.u32):
                 albedo = spheres.albedos[sp_index]
                 metallic = spheres.metallics[sp_index]
                 ior = spheres.iors[sp_index]
-                roughness = ti.max(0.0, spheres.roughness[sp_index])
+                roughness = ti.max(0.04, spheres.roughness[sp_index])
                 f0 = (1.0 - ior) / (1.0 + ior)
                 f0 = f0 * f0
                 f0 = lerp(f0, luma(albedo), metallic)
@@ -285,7 +288,6 @@ def trace(sample: ti.u32):
                 radiance += spheres.emissions[sp_index] * albedo_factor
 
                 view_fresnel = schlick2(wo, n, f0)
-                # view_fresnel = 0.0
                 sample_weights = ti.Vector([1.0 - view_fresnel, view_fresnel])
 
                 weight = 0.0
@@ -297,7 +299,7 @@ def trace(sample: ti.u32):
                 if ti.random() < sample_weights[0]:
                     wi = cosine_sample(n).normalized()
                     h = (wi + wo).normalized()
-                    shaded = ti.max(0.0, wi.dot(n) * albedo / math.pi)
+                    shaded = ti.max(0.00, wi.dot(n) * albedo / math.pi)
 
                 else:
                     wi = ggx_sample(n, wo, roughness).normalized()
@@ -319,7 +321,6 @@ def trace(sample: ti.u32):
                         break
                     else:
                         albedo_factor /= luma(albedo)
-                # radiance += shaded
                 d = wi
                 o = p + eps * d
 

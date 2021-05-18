@@ -17,6 +17,12 @@ A reatime path tracer written in taichi
   * ggx normal weighted pdf 
 * Gamma correction of final result
 
+The 5 balls in the scene are:
+ 1. rough golden ball
+ 2. smooth ceramics ball
+ 3. the light source ball
+ 4. huge ground rough iron ball
+ 5. smooth metal ball
 #### Usage
 
 ```bash
