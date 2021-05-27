@@ -104,16 +104,16 @@ spheres.from_numpy(
         [0.0, 2., 0., 0.5],
         [0.0, -500., 0., 497.5],
         [-1, -2.0, 0.5, 0.5]]).astype(np.float32),
-    albedos=np.array([[1.0, 0.8, 0.2],
+    albedos=np.array([[1.0, 1.0, 0.0],
                       [1.0, 1.0, 1.0],
                       [0.0, 0.0, 0.0],
                       [1.0, 0.8, 0.6],
                       [1.0, 1.0, 1.0]]).astype(np.float32),
     emissions=np.array([[0, 0, 0], [0, 0, 0], [15, 15, 15], [
                        0, 0, 0], [0, 0, 0]]).astype(np.float32),
-    roughness=np.array([0.3, 0.0, 0.0, 0.5, 0.0]).astype(np.float32),
+    roughness=np.array([0.2, 0.0, 0.0, 0.5, 0.0]).astype(np.float32),
     metallics=np.array([1.0, 0.0, 0.8, 0.9, 1.0]).astype(np.float32),
-    iors=np.array([0.495, 1.4, 2.0, 2.90, 2.5]).astype(np.float32),
+    iors=np.array([2.495, 1.4, 2.0, 2.90, 2.5]).astype(np.float32),
 )
 
 skybox.load()
@@ -233,7 +233,8 @@ def ggx_smith_uncorrelated(roughness, hdotn, vdotn, ldotn, fresnel):
 
 @ ti.func
 def luma(albedo):
-    return albedo.dot(ti.Vector([0.2126, 0.7152, 0.0722]))
+    # return albedo.dot(ti.Vector([0.2126, 0.7152, 0.0722]))
+    return max(albedo[0], albedo[1], albedo[2])
 
 
 @ ti.func
@@ -249,21 +250,35 @@ def halton(b, i):
 
 gui = ti.GUI("Path Tracer", res=(width, height))
 
+focal_length = 10.0
+
 
 @ ti.kernel
 def trace(sample: ti.u32):
     for i, j in linear_pixel:
         o = ti.Vector([camera_pos[0], camera_pos[1], camera_pos[2]])
+        aperture_size = 0.2
         forward = -o.normalized()
+
         u = ti.Vector([0.0, 1.0, 0.0]).cross(forward).normalized()
         v = forward.cross(u).normalized()
         u = -u
         # anti aliasing
-        d = (i + ti.random() - width / 2.0) / width * u * 1.5 \
-            + (j + ti.random() - height / 2.0) / width * v * 1.5 \
-            + width / width * forward
+        d = ((i + ti.random() - width / 2.0) / width * u * 1.5
+             + (j + ti.random() - height / 2.0) / width * v * 1.5
+             + width / width * forward).normalized()
 
-        d = d.normalized()
+        focal_point = d * focal_length / d.dot(forward) + o
+
+        o += d * 0.01
+
+        # assuming a circle-like aperture
+        phi = 2.0 * math.pi * ti.random()
+        aperture_radius = ti.random() * aperture_size
+        o += u * aperture_radius * ti.cos(phi) + \
+            v * aperture_radius * ti.sin(phi)
+
+        d = (focal_point - o).normalized()
         uv = cubemap_coord(d)
         albedo_factor = ti.Vector([1.0, 1.0, 1.0])
         radiance = ti.Vector([0.0, 0.0, 0.0])
@@ -375,8 +390,8 @@ def try_reset(t):
 
 sample = 0
 t = 1
-last_camera_pos[2] = 10.0
-camera_pos[2] = 10.0
+last_camera_pos[2] = focal_length
+camera_pos[2] = focal_length
 
 while True:
     if sample % 64 == 0:

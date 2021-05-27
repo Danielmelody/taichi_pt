@@ -2,7 +2,7 @@
 
 ![](result.png)
 
-A reatime path tracer written in [taichi](https://github.com/taichi-dev/taichi)
+A progressive path tracer written in [taichi](https://github.com/taichi-dev/taichi)
 
 #### Features:
 * Global illumination via unbiased Monte Carlo path tracing
@@ -11,6 +11,7 @@ A reatime path tracer written in [taichi](https://github.com/taichi-dev/taichi)
 * Ray-Sphere intersection
 * Unbiasd russain roule 
 * Antialiasing via super-sampling
+* Depth of field effect of lens camera
 * Multiple Importance Sampling
   * Balance heuristic 
   * Cosine-weighted pdf
@@ -31,4 +32,5 @@ python3 pt.py
 ```
 
 and you a ready to go.
-To see a interactive result **zoom in/out, press and drag the mouse to see different rendering result from different camera position**
+
+Zoom in/out, press and drag the mouse to see a interactive result
