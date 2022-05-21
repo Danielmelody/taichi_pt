@@ -1,17 +1,11 @@
-from locale import currency
-from posix import F_OK
-from PIL.Image import BILINEAR
-from _pytest.store import D
-from astroid.interpreter._import import spec
 import taichi as ti
 import numpy as np
 import math
 
-ti.init(arch=ti.gpu, excepthook=True)
+ti.init(arch=ti.gpu)
 
 inf = 1e10
 eps = 1e-3
-
 
 class Image:
     def __init__(self, path):
