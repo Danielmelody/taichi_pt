@@ -9,7 +9,7 @@ eps = 1e-3
 
 class Image:
     def __init__(self, path):
-        self.img = ti.imread(path)
+        self.img = ti.tools.imread(path)
         tex_w, tex_h = self.img.shape[0:2]
         self.field = ti.Vector.field(3, dtype=ti.u8, shape=(tex_w, tex_h))
 
@@ -90,6 +90,7 @@ skybox = Image('skybox.jpg')  # z > 0
 
 last_camera_pos = ti.field(ti.f32, 3)
 camera_pos = ti.field(ti.f32, 3)
+focal_length = ti.field(ti.f32, 1)
 
 spheres.from_numpy(
     center_radius=np.array([
@@ -194,6 +195,7 @@ def ggx_ndf_wi(wi, wo, n, roughness):
     return wi_pf
 
 
+@ ti.func
 def ggx_pdf(roughness, hdotn, vdoth):
     t = hdotn*hdotn*roughness*roughness - (hdotn*hdotn - 1.0)
     D = (roughness*roughness) * math.pi / (t*t)
@@ -213,6 +215,7 @@ def smith_g(NoV, NoL, roughness):
     return 0.5 / (ggx_v + ggx_l)
 
 
+@ti.func
 def ggx_smith_uncorrelated(roughness, hdotn, vdotn, ldotn, fresnel):
     t = hdotn*hdotn*roughness*roughness - (hdotn*hdotn - 1.0)
     D = (roughness*roughness) * math.pi / (t*t)
@@ -244,8 +247,6 @@ def halton(b, i):
 
 gui = ti.GUI("Path Tracer", res=(width, height))
 
-focal_length = 10.0
-
 
 @ ti.kernel
 def trace(sample: ti.u32):
@@ -262,7 +263,7 @@ def trace(sample: ti.u32):
              + (j + ti.random() - height / 2.0) / width * v * 1.5
              + width / width * forward).normalized()
 
-        focal_point = d * focal_length / d.dot(forward) + o
+        focal_point = d * focal_length[0] / d.dot(forward) + o
 
         o += d * 0.01
 
@@ -339,7 +340,7 @@ def trace(sample: ti.u32):
 
         linear_pixel[i, j] = (linear_pixel[i, j] *
                               (sample - 1) + radiance) / sample
-        pixel[i, j] = ti.sqrt(linear_pixel[i, j])
+        pixel[i, j] = ti.pow(linear_pixel[i, j], 1.0/2.2)
 
 
 start_cursor = [0.0, 0.0]
@@ -375,17 +376,21 @@ def try_reset(t):
 
         if e.key == gui.WHEEL:
             dt = e.delta[1] / 1000.0
-            for i in range(3):
-                camera_pos[i] *= (1.0 + dt)
+            if gui.is_pressed(gui.SHIFT):
+                focal_length[0] *= (1.0 + dt)
+            else:
+                for i in range(3):
+                    camera_pos[i] *= (1.0 + dt)
             return True
 
     return False
 
-
+# Initialize the camera
 sample = 0
 t = 1
-last_camera_pos[2] = focal_length
-camera_pos[2] = focal_length
+focal_length[0] = 10.0
+last_camera_pos[2] = focal_length[0]
+camera_pos[2] = focal_length[0]
 
 while True:
     if sample % 64 == 0:
