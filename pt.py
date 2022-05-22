@@ -5,7 +5,8 @@ import math
 ti.init(arch=ti.gpu)
 
 inf = 1e10
-eps = 1e-3
+eps = 1e-4
+max_luminance = 100
 
 class Image:
     def __init__(self, path):
@@ -20,15 +21,23 @@ class Image:
 @ti.func
 def tex2d(tex_field, uv):
     tex_w, tex_h = tex_field.shape[0:2]
-    p = uv * ti.Vector([tex_w - 1, tex_h - 1])
-    l = ti.floor(p)
+    p = uv * ti.Vector([tex_w, tex_h])
+    l = int(ti.floor(p))
     t = p - l
 
     # bilinear interp
     return (
-        ((tex_field[p] * (1 - t[0])) +
-         tex_field[p + ti.Vector([1, 0])] * t[0]) * (1 - t[1])
-        + (tex_field[p + ti.Vector([1, 0])] * (1 - t[0]) + tex_field[p + ti.Vector([1, 1])] * t[0]) * t[1])
+        ((tex_field[l] * (1 - t[0])) + tex_field[l + ti.Vector([1, 0])] * t[0]) * (1 - t[1])
+        + (tex_field[l + ti.Vector([0, 1])] * (1 - t[0]) + tex_field[l + ti.Vector([1, 1])] * t[0]) * t[1]) / 255.0
+    
+def gaussian_kernel(l=5, sig=1.):
+    """\
+    creates gaussian kernel with side length `l` and a sigma of `sig`
+    """
+    ax = np.linspace(-(l - 1) / 2., (l - 1) / 2., l, dtype=np.single)
+    gauss = np.exp(-0.5 * np.square(ax) / np.square(sig), dtype=np.single)
+    kernel = np.outer(gauss, gauss)
+    return kernel / np.sum(kernel)
 
 
 @ti.data_oriented
@@ -82,32 +91,50 @@ class Spheres:
 
 width, height = 1080, 720
 
-linear_pixel = ti.Vector.field(3, dtype=float, shape=(width, height))
-pixel = ti.Vector.field(3, dtype=float, shape=(width, height))
+super_samples = 2
+
+ss_width = width * super_samples
+ss_height = height * super_samples
+
+linear_pixel = ti.Vector.field(3, dtype=ti.f32, shape=(ss_width, ss_height))
+error_raycounters = ti.Vector.field(2, dtype=ti.f32, shape=(ss_width, ss_height))
+bloom_pixel = ti.Vector.field(3, dtype=ti.f32, shape=(ss_width, ss_height))
+pixel = ti.Vector.field(3, dtype=ti.f32, shape=(width, height))
+
+gaussian_kernel_size = 9
+bloom_strength = 0.05
+ambient_weight = 0.2
+start_cursor = [0.0, 0.0]
+
+
+
+blur_kernel = ti.field(ti.f32, shape=(gaussian_kernel_size, gaussian_kernel_size))
+blur_kernel.from_numpy(gaussian_kernel(gaussian_kernel_size, 1.))
+
 spheres = Spheres()
 skybox = Image('skybox.jpg')  # z > 0
 
 
 last_camera_pos = ti.field(ti.f32, 3)
 camera_pos = ti.field(ti.f32, 3)
-focal_length = ti.field(ti.f32, 1)
+focal_length = ti.field(ti.f32, shape=())
 
 spheres.from_numpy(
     center_radius=np.array([
         [-2., 0.0, -3., 2.5],
         [1.0, -1.5, 1.0, 1.],
-        [0.0, 2., 0., 0.5],
+        [0.0, 0.5, 1.0, 0.3],
         [0.0, -500., 0., 497.5],
         [-1, -2.0, 0.5, 0.5]]).astype(np.float32),
     albedos=np.array([[1.0, 1.0, 0.0],
                       [1.0, 1.0, 1.0],
-                      [0.0, 0.0, 0.0],
+                      [1.0, 1.0, 1.0],
                       [1.0, 0.8, 0.6],
                       [1.0, 1.0, 1.0]]).astype(np.float32),
-    emissions=np.array([[0, 0, 0], [0, 0, 0], [15, 15, 15], [
+    emissions=np.array([[0, 0, 0], [0, 0, 0], [3, 2, 2], [
                        0, 0, 0], [0, 0, 0]]).astype(np.float32),
     roughness=np.array([0.2, 0.0, 0.0, 0.5, 0.0]).astype(np.float32),
-    metallics=np.array([1.0, 0.0, 0.8, 0.9, 1.0]).astype(np.float32),
+    metallics=np.array([1.0, 0.0, 0.8, 0.95, 1.0]).astype(np.float32),
     iors=np.array([2.495, 1.4, 2.0, 2.90, 2.5]).astype(np.float32),
 )
 
@@ -234,17 +261,6 @@ def luma(albedo):
     return max(albedo[0], albedo[1], albedo[2])
 
 
-@ ti.func
-def halton(b, i):
-    r = 0.0
-    f = 1.0
-    while i > 0:
-        f = f / float(b)
-        r = r + f * float(i % b)
-        i = int(ti.floor(float(i) / float(b)))
-    return r
-
-
 gui = ti.GUI("Path Tracer", res=(width, height))
 
 
@@ -252,20 +268,18 @@ gui = ti.GUI("Path Tracer", res=(width, height))
 def trace(sample: ti.u32):
     for i, j in linear_pixel:
         o = ti.Vector([camera_pos[0], camera_pos[1], camera_pos[2]])
-        aperture_size = 0.2
+        aperture_size = 0.1
         forward = -o.normalized()
 
         u = ti.Vector([0.0, 1.0, 0.0]).cross(forward).normalized()
         v = forward.cross(u).normalized()
         u = -u
-        # anti aliasing
-        d = ((i + ti.random() - width / 2.0) / width * u * 1.5
-             + (j + ti.random() - height / 2.0) / width * v * 1.5
-             + width / width * forward).normalized()
 
-        focal_point = d * focal_length[0] / d.dot(forward) + o
+        d = ((i + ti.random() - ss_width / 2.0) / ss_width * u
+             + (j + ti.random() - ss_height / 2.0) / ss_width * v
+             + ss_width / ss_width * forward).normalized()
 
-        o += d * 0.01
+        focal_point = d * focal_length[None] / d.dot(forward) + o
 
         # assuming a circle-like aperture
         phi = 2.0 * math.pi * ti.random()
@@ -285,6 +299,7 @@ def trace(sample: ti.u32):
                 p = sp[0] * d + o
                 c_ = spheres.center_radius[sp_index]
                 c = ti.Vector([c_[0], c_[1], c_[2]])
+                radius = c_[3]
                 n = (p - c).normalized()
                 wo = -d
                 albedo = spheres.albedos[sp_index]
@@ -295,7 +310,7 @@ def trace(sample: ti.u32):
                 f0 = f0 * f0
                 f0 = lerp(f0, luma(albedo), metallic)
                 wi = reflect(-wo, n)
-                radiance += spheres.emissions[sp_index] * albedo_factor
+                radiance += spheres.emissions[sp_index] / (radius * radius) * albedo_factor
 
                 view_fresnel = schlick2(wo, n, f0)
                 sample_weights = ti.Vector([1.0 - view_fresnel, view_fresnel])
@@ -335,15 +350,34 @@ def trace(sample: ti.u32):
                 o = p + eps * d
 
             else:
-                radiance += albedo_factor * tex2d(skybox.field, uv) / 255
+                radiance += albedo_factor * (tex2d(skybox.field, uv)) * ambient_weight
                 break
-
-        linear_pixel[i, j] = (linear_pixel[i, j] *
-                              (sample - 1) + radiance) / sample
-        pixel[i, j] = ti.pow(linear_pixel[i, j], 1.0/2.2)
-
-
-start_cursor = [0.0, 0.0]
+        linear_color = radiance
+        linear_pixel[i, j] = (linear_pixel[i, j] * (sample - 1) + linear_color) / sample
+        
+        luminance = radiance.dot(ti.Vector([0.2126, 0.7152, 0.0722]))
+        if luminance < max_luminance:
+            if (luminance > 1.0):
+                bloom_pixel[i, j] = (bloom_pixel[i, j] * (sample - 1) + linear_color) / sample
+            else:
+                bloom_pixel[i, j] = (bloom_pixel[i, j] * (sample - 1)) / sample
+        
+        
+    for i, j in bloom_pixel:
+        hdr_blur = ti.Vector([0.0, 0.0, 0.0])
+        for kx in ti.ndrange(gaussian_kernel_size):
+            for ky in ti.ndrange(gaussian_kernel_size):
+                hdr_blur += bloom_pixel[i + kx - gaussian_kernel_size // 2, j + ky - gaussian_kernel_size // 2] * blur_kernel[kx, ky]
+        
+        bloom_pixel[i, j] = hdr_blur
+    
+    for i, j in pixel:
+        pixel[i, j] = ti.Vector([0.0, 0.0, 0.0])
+        for sx in ti.ndrange(super_samples):
+            for sy in ti.ndrange(super_samples):
+                x = i * super_samples + sx
+                y = j * super_samples + sy
+                pixel[i, j] += min(pow(linear_pixel[x, y] + bloom_pixel[x, y] * bloom_strength, 1.0 / 2.2), 1.0) / (super_samples * super_samples)
 
 
 def try_reset(t):
@@ -377,7 +411,7 @@ def try_reset(t):
         if e.key == gui.WHEEL:
             dt = e.delta[1] / 1000.0
             if gui.is_pressed(gui.SHIFT):
-                focal_length[0] *= (1.0 + dt)
+                focal_length[None] *= (1.0 + dt)
             else:
                 for i in range(3):
                     camera_pos[i] *= (1.0 + dt)
@@ -388,20 +422,30 @@ def try_reset(t):
 # Initialize the camera
 sample = 0
 t = 1
-focal_length[0] = 10.0
-last_camera_pos[2] = focal_length[0]
-camera_pos[2] = focal_length[0]
+focal_length[None] = 12.0
+last_camera_pos[2] = focal_length[None]
+camera_pos[2] = focal_length[None]
+
+print("Start tracing...")
+print("0 spp")
 
 while True:
-    if sample % 64 == 0:
-        print(sample, " spp")
 
     if try_reset(t):
+        if sample > 1:
+            print ("\033[A                             \033[A")
+            print("Camera moved, restart tracing...")
+            print("0 spp")
         sample = 0
         linear_pixel.fill(0)
+        bloom_pixel.fill(0)
+
+    print ("\033[A                             \033[A")
+    print(f"[{sample * (super_samples * super_samples)} spp]" )
 
     sample += 1
     trace(sample)
     t += 1
-    gui.set_image(linear_pixel)
+    gui.set_image(pixel)
     gui.show()
+    

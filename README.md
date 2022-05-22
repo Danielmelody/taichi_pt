@@ -15,7 +15,8 @@ A progressive path tracer written in [taichi](https://github.com/taichi-dev/taic
 * Multiple Importance Sampling
   * Balance heuristic 
   * Cosine-weighted pdf
-  * ggx normal weighted pdf 
+  * ggx normal weighted pdf
+* Bloom effect 
 * Gamma correction of final result
 
 The 5 balls in the scene are:
@@ -33,4 +34,5 @@ python3 pt.py
 
 and you a ready to go.
 
-Zoom in/out, press and drag the mouse to see a interactive result
+Scroll mouse to zoom in/out, press and drag the mouse to see a interactive result.
+You can also press shift while scrolling mouse to change the focal length of the camera.
