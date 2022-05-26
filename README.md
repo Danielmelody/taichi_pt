@@ -16,6 +16,7 @@ A progressive path tracer written in [taichi](https://github.com/taichi-dev/taic
   * Balance heuristic 
   * Cosine-weighted pdf
   * ggx normal weighted pdf
+* ACES Tone mapping
 * Bloom effect 
 * Gamma correction of final result
 

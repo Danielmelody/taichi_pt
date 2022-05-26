@@ -6,6 +6,7 @@ ti.init(arch=ti.gpu)
 
 inf = 1e10
 eps = 1e-4
+
 max_luminance = 100
 
 class Image:
@@ -41,34 +42,22 @@ def gaussian_kernel(l=5, sig=1.):
 
 
 @ti.data_oriented
-class Spheres:
-    def from_numpy(self, center_radius, albedos, emissions, roughness, metallics, iors):
-        self.center_radius = ti.Vector.field(
-            4, dtype=ti.f32, shape=center_radius.shape[:1])
-        self.albedos = ti.Vector.field(
-            3, dtype=ti.f32, shape=albedos.shape[:1])
-        self.emissions = ti.Vector.field(
-            3, dtype=ti.f32, shape=emissions.shape[:1])
-        self.roughness = ti.field(
-            dtype=ti.f32, shape=roughness.shape[:1])
-        self.metallics = ti.field(
-            dtype=ti.f32, shape=metallics.shape[:1])
-        self.iors = ti.field(
-            dtype=ti.f32, shape=iors.shape[:1])
-
-        self.center_radius.from_numpy(center_radius)
-        self.albedos.from_numpy(albedos)
-        self.emissions.from_numpy(emissions)
-        self.roughness.from_numpy(roughness)
-        self.metallics.from_numpy(metallics)
-        self.iors.from_numpy(iors)
+class SphereSOA:
+    def __init__(self, array_length):
+        self.center_radius = ti.Vector.field(4, dtype=ti.f32, shape=(array_length))
+        self.albedos = ti.Vector.field(3, dtype=ti.f32, shape=(array_length))
+        self.emissions = ti.Vector.field(3, dtype=ti.f32, shape=(array_length))
+        self.roughness = ti.field(dtype=ti.f32, shape=(array_length))
+        self.metallics = ti.field(dtype=ti.f32, shape=(array_length))
+        self.iors = ti.field(dtype=ti.f32, shape=(array_length))
+        self.array_length = array_length
 
     @ ti.func
     def intersect(self, o, d):
         min_t = inf
         min_index = -1
         sp_index = 0
-        for i in ti.ndrange(5):
+        for i in ti.ndrange(self.array_length):
             c_r = self.center_radius[i]
             r = c_r[3]
             p = ti.Vector([c_r[0], c_r[1], c_r[2]])
@@ -91,18 +80,15 @@ class Spheres:
 
 width, height = 1080, 720
 
-super_samples = 2
 
-ss_width = width * super_samples
-ss_height = height * super_samples
-
-linear_pixel = ti.Vector.field(3, dtype=ti.f32, shape=(ss_width, ss_height))
-error_raycounters = ti.Vector.field(2, dtype=ti.f32, shape=(ss_width, ss_height))
-bloom_pixel = ti.Vector.field(3, dtype=ti.f32, shape=(ss_width, ss_height))
+linear_pixel = ti.Vector.field(3, dtype=ti.f32, shape=(width, height))
+errors = ti.field(dtype=ti.f32, shape=(width, height))
+ray_count = ti.field(dtype=ti.i32, shape=(width, height))
+bloom_pixel = ti.Vector.field(3, dtype=ti.f32, shape=(width, height))
 pixel = ti.Vector.field(3, dtype=ti.f32, shape=(width, height))
 
 gaussian_kernel_size = 9
-bloom_strength = 0.05
+bloom_strength = 0.02
 ambient_weight = 0.2
 start_cursor = [0.0, 0.0]
 
@@ -111,7 +97,6 @@ start_cursor = [0.0, 0.0]
 blur_kernel = ti.field(ti.f32, shape=(gaussian_kernel_size, gaussian_kernel_size))
 blur_kernel.from_numpy(gaussian_kernel(gaussian_kernel_size, 1.))
 
-spheres = Spheres()
 skybox = Image('skybox.jpg')  # z > 0
 
 
@@ -119,24 +104,43 @@ last_camera_pos = ti.field(ti.f32, 3)
 camera_pos = ti.field(ti.f32, 3)
 focal_length = ti.field(ti.f32, shape=())
 
-spheres.from_numpy(
-    center_radius=np.array([
-        [-2., 0.0, -3., 2.5],
-        [1.0, -1.5, 1.0, 1.],
-        [0.0, 0.5, 1.0, 0.3],
-        [0.0, -500., 0., 497.5],
-        [-1, -2.0, 0.5, 0.5]]).astype(np.float32),
-    albedos=np.array([[1.0, 1.0, 0.0],
-                      [1.0, 1.0, 1.0],
-                      [1.0, 1.0, 1.0],
-                      [1.0, 0.8, 0.6],
-                      [1.0, 1.0, 1.0]]).astype(np.float32),
-    emissions=np.array([[0, 0, 0], [0, 0, 0], [3, 2, 2], [
-                       0, 0, 0], [0, 0, 0]]).astype(np.float32),
-    roughness=np.array([0.2, 0.0, 0.0, 0.5, 0.0]).astype(np.float32),
-    metallics=np.array([1.0, 0.0, 0.8, 0.95, 1.0]).astype(np.float32),
-    iors=np.array([2.495, 1.4, 2.0, 2.90, 2.5]).astype(np.float32),
-)
+class SphereAOS:
+    def __init__(self, center_radius, albedo, emission, roughness, metallic, ior):
+        self.center_radius = center_radius
+        self.albedo = albedo
+        self.emission = emission
+        self.roughness = roughness
+        self.metallic = metallic
+        self.ior = ior
+
+
+spheres_aos = [
+    SphereAOS(
+        center_radius=ti.Vector([-2.,0.0, -3.0, 2.5]), albedo=ti.Vector([1.0, 1.0, 0.0]), emission=ti.Vector([0, 0, 0]), roughness=0.2, metallic=1.0, ior=2.495),
+    SphereAOS(
+        center_radius=ti.Vector([1.0, -1.5, 1.0, 1.0]), albedo=ti.Vector([1.0, 1.0, 1.0]), emission=ti.Vector([0, 0, 0]), roughness=0.0, metallic=0.0, ior=1.4),
+    SphereAOS(
+        center_radius=ti.Vector([0.0, -500., 0., 497.5]), albedo=ti.Vector([1.0, 0.8, 0.6]), emission=ti.Vector([0, 0, 0]), roughness=0.5, metallic=0.95, ior=2.90),
+    SphereAOS(
+        center_radius=ti.Vector([-1, -2.0, 0.5, 0.5]), albedo=ti.Vector([1.0, 1.0, 1.0]), emission=ti.Vector([0, 0, 0]), roughness=0.0, metallic=1.0, ior=2.5),
+    SphereAOS(
+        center_radius=ti.Vector([2.0, 0, -2.0, 0.7]), albedo=ti.Vector([0, 0, 0]), emission=ti.Vector([15, 1, 1]), roughness=0.0, metallic=0.8, ior=2.0),
+    SphereAOS(
+        center_radius=ti.Vector([-2.0, 1.0, 1.0, 0.7]), albedo=ti.Vector([0, 0, 0]), emission=ti.Vector([0.2, 15, 15]), roughness=0.0, metallic=0.8, ior=2.0),
+    SphereAOS(
+        center_radius=ti.Vector([-8.0, -1.5, -5, 1.01]), albedo=ti.Vector([1.0, 1.0, 1.0]), emission=ti.Vector([4, 4, 0.5]), roughness=0.5, metallic=0.2, ior=2.0),
+    
+]
+
+spheres_soa = SphereSOA(len(spheres_aos))
+
+for i, sphere in enumerate(spheres_aos):
+    spheres_soa.center_radius[i] = sphere.center_radius
+    spheres_soa.albedos[i] = sphere.albedo
+    spheres_soa.emissions[i] = sphere.emission
+    spheres_soa.roughness[i] = sphere.roughness
+    spheres_soa.metallics[i] = sphere.metallic
+    spheres_soa.iors[i] = sphere.ior
 
 skybox.load()
 
@@ -257,112 +261,133 @@ def ggx_smith_uncorrelated(roughness, hdotn, vdotn, ldotn, fresnel):
 
 @ ti.func
 def luma(albedo):
-    # return albedo.dot(ti.Vector([0.2126, 0.7152, 0.0722]))
-    return max(albedo[0], albedo[1], albedo[2])
+    return albedo.dot(ti.Vector([0.2126, 0.7152, 0.0722]))
+
+@ti.func
+def tone(x):
+	A = 2.51
+	B = 0.03
+	C = 2.43
+	D = 0.59
+	E = 0.14
+	return (x * (A * x + B)) / (x * (C * x + D) + E)
+
 
 
 gui = ti.GUI("Path Tracer", res=(width, height))
 
 
 @ ti.kernel
-def trace(sample: ti.u32):
+def trace():
     for i, j in linear_pixel:
-        o = ti.Vector([camera_pos[0], camera_pos[1], camera_pos[2]])
-        aperture_size = 0.1
-        forward = -o.normalized()
-
-        u = ti.Vector([0.0, 1.0, 0.0]).cross(forward).normalized()
-        v = forward.cross(u).normalized()
-        u = -u
-
-        d = ((i + ti.random() - ss_width / 2.0) / ss_width * u
-             + (j + ti.random() - ss_height / 2.0) / ss_width * v
-             + ss_width / ss_width * forward).normalized()
-
-        focal_point = d * focal_length[None] / d.dot(forward) + o
-
-        # assuming a circle-like aperture
-        phi = 2.0 * math.pi * ti.random()
-        aperture_radius = ti.random() * aperture_size
-        o += u * aperture_radius * ti.cos(phi) + \
-            v * aperture_radius * ti.sin(phi)
-
-        d = (focal_point - o).normalized()
-        uv = cubemap_coord(d)
-        albedo_factor = ti.Vector([1.0, 1.0, 1.0])
-        radiance = ti.Vector([0.0, 0.0, 0.0])
-        for step in ti.ndrange(32):
-            sp = spheres.intersect(o, d)
+        adaptive_sampler_count = int(16 * tone(errors[i, j] / ray_count[i, j]))
+        # pixel[i, j].fill(adaptive_sampler_count / 16)
+        for addition_sampler in ti.ndrange(16):
+            if addition_sampler > adaptive_sampler_count:
+                continue
+            ray_count[i, j] += 1
+            sample = ray_count[i, j]
+            o = ti.Vector([camera_pos[0], camera_pos[1], camera_pos[2]])
+            aperture_size = 0.1
+            forward = -o.normalized()
+    
+            u = ti.Vector([0.0, 1.0, 0.0]).cross(forward).normalized()
+            v = forward.cross(u).normalized()
+            u = -u
+    
+            d = ((i + ti.random() - width / 2.0) / width * u
+                 + (j +  ti.random() - height / 2.0) / width * v
+                 + width / width * forward).normalized()
+    
+            focal_point = d * focal_length[None] / d.dot(forward) + o
+    
+            # assuming a circle-like aperture
+            phi = 2.0 * math.pi * ti.random()
+            aperture_radius = ti.random() * aperture_size
+            o += u * aperture_radius * ti.cos(phi) + \
+                v * aperture_radius * ti.sin(phi)
+    
+            d = (focal_point - o).normalized()
             uv = cubemap_coord(d)
-            if sp[1] > -1:
-                sp_index = int(sp[1])
-                p = sp[0] * d + o
-                c_ = spheres.center_radius[sp_index]
-                c = ti.Vector([c_[0], c_[1], c_[2]])
-                radius = c_[3]
-                n = (p - c).normalized()
-                wo = -d
-                albedo = spheres.albedos[sp_index]
-                metallic = spheres.metallics[sp_index]
-                ior = spheres.iors[sp_index]
-                roughness = ti.max(0.04, spheres.roughness[sp_index])
-                f0 = (1.0 - ior) / (1.0 + ior)
-                f0 = f0 * f0
-                f0 = lerp(f0, luma(albedo), metallic)
-                wi = reflect(-wo, n)
-                radiance += spheres.emissions[sp_index] / (radius * radius) * albedo_factor
-
-                view_fresnel = schlick2(wo, n, f0)
-                sample_weights = ti.Vector([1.0 - view_fresnel, view_fresnel])
-
-                weight = 0.0
-
-                h = (wi + wo).normalized()
-
-                shaded = ti.Vector([0.0, 0.0, 0.0])
-
-                if ti.random() < sample_weights[0]:
-                    wi = cosine_sample(n).normalized()
+            albedo_factor = ti.Vector([1.0, 1.0, 1.0])
+            radiance = ti.Vector([0.0, 0.0, 0.0])
+            for step in ti.ndrange(32):
+                sp = spheres_soa.intersect(o, d)
+                uv = cubemap_coord(d)
+                if sp[1] > -1:
+                    sp_index = int(sp[1])
+                    p = sp[0] * d + o
+                    c_ = spheres_soa.center_radius[sp_index]
+                    c = ti.Vector([c_[0], c_[1], c_[2]])
+                    radius = c_[3]
+                    n = (p - c).normalized()
+                    wo = -d
+                    albedo = spheres_soa.albedos[sp_index]
+                    metallic = spheres_soa.metallics[sp_index]
+                    ior = spheres_soa.iors[sp_index]
+                    roughness = ti.max(0.04, spheres_soa.roughness[sp_index])
+                    f0 = (1.0 - ior) / (1.0 + ior)
+                    f0 = f0 * f0
+                    f0 = lerp(f0, luma(albedo), metallic)
+                    wi = reflect(-wo, n)
+                    radiance += spheres_soa.emissions[sp_index] / (radius * radius) * albedo_factor
+    
+                    view_fresnel = schlick2(wo, n, f0)
+                    sample_weights = ti.Vector([1.0 - view_fresnel, view_fresnel])
+    
+                    weight = 0.0
+    
                     h = (wi + wo).normalized()
-                    shaded = ti.max(0.00, wi.dot(n) * albedo / math.pi)
-
-                else:
-                    wi = ggx_sample(n, wo, roughness).normalized()
-                    h = (wi + wo).normalized()
-                    F = schlick2(wi, n, f0)
-                    shaded = ti.max(0.0, wi.dot(n) * albedo * ggx_smith_uncorrelated(
-                        roughness, h.dot(n), wo.dot(n), wi.dot(n), F))
-
-                pdf_lambert = wi.dot(n) / math.pi
-                pdf_ggx = ggx_pdf(roughness, h.dot(n), wo.dot(h))
-
-                weight = ti.max(0.0, 1.0 / (sample_weights[0] *
-                                            pdf_lambert + sample_weights[1] * pdf_ggx))
-
-                # russian roule
-                albedo_factor *= shaded * weight
-                if step > 5:
-                    if luma(albedo) < ti.random():
-                        break
+    
+                    shaded = ti.Vector([0.0, 0.0, 0.0])
+    
+                    if ti.random() < sample_weights[0]:
+                        wi = cosine_sample(n).normalized()
+                        h = (wi + wo).normalized()
+                        shaded = ti.max(0.00, wi.dot(n) * albedo / math.pi)
+    
                     else:
-                        albedo_factor /= luma(albedo)
-                d = wi
-                o = p + eps * d
+                        wi = ggx_sample(n, wo, roughness).normalized()
+                        h = (wi + wo).normalized()
+                        F = schlick2(wi, n, f0)
+                        shaded = ti.max(0.0, wi.dot(n) * albedo * ggx_smith_uncorrelated(
+                            roughness, h.dot(n), wo.dot(n), wi.dot(n), F))
+    
+                    pdf_lambert = wi.dot(n) / math.pi
+                    pdf_ggx = ggx_pdf(roughness, h.dot(n), wo.dot(h))
+    
+                    weight = ti.max(0.0, 1.0 / (sample_weights[0] *
+                                                pdf_lambert + sample_weights[1] * pdf_ggx))
+    
+                    # russian roule
+                    albedo_factor *= shaded * weight
+                    if step > 5:
+                        if luma(albedo) < ti.random():
+                            break
+                        else:
+                            albedo_factor /= luma(albedo)
+                    d = wi
+                    o = p + eps * d
+    
+                else:
+                    radiance += albedo_factor * (tex2d(skybox.field, uv)) * ambient_weight
+                    break
+            linear_color = radiance
 
-            else:
-                radiance += albedo_factor * (tex2d(skybox.field, uv)) * ambient_weight
-                break
-        linear_color = radiance
-        linear_pixel[i, j] = (linear_pixel[i, j] * (sample - 1) + linear_color) / sample
-        
-        luminance = radiance.dot(ti.Vector([0.2126, 0.7152, 0.0722]))
-        if luminance < max_luminance:
-            if (luminance > 1.0):
-                bloom_pixel[i, j] = (bloom_pixel[i, j] * (sample - 1) + linear_color) / sample
-            else:
-                bloom_pixel[i, j] = (bloom_pixel[i, j] * (sample - 1)) / sample
-        
-        
+            linear_pixel[i, j] = (linear_pixel[i, j] * (sample - 1) + linear_color) / sample
+            
+            errorVec = linear_color - linear_pixel[i, j]
+            error = errorVec.dot(errorVec)
+            errors[i, j] += error
+            
+            luminance = radiance.dot(ti.Vector([0.2126, 0.7152, 0.0722]))
+            
+            if(luminance < max_luminance):
+                if (luminance > 1.0):
+                    bloom_pixel[i, j] = (bloom_pixel[i, j] * (sample - 1) + linear_color) / sample
+                else:
+                    bloom_pixel[i, j] = (bloom_pixel[i, j] * (sample - 1)) / sample
+            
     for i, j in bloom_pixel:
         hdr_blur = ti.Vector([0.0, 0.0, 0.0])
         for kx in ti.ndrange(gaussian_kernel_size):
@@ -370,14 +395,9 @@ def trace(sample: ti.u32):
                 hdr_blur += bloom_pixel[i + kx - gaussian_kernel_size // 2, j + ky - gaussian_kernel_size // 2] * blur_kernel[kx, ky]
         
         bloom_pixel[i, j] = hdr_blur
-    
+        
     for i, j in pixel:
-        pixel[i, j] = ti.Vector([0.0, 0.0, 0.0])
-        for sx in ti.ndrange(super_samples):
-            for sy in ti.ndrange(super_samples):
-                x = i * super_samples + sx
-                y = j * super_samples + sy
-                pixel[i, j] += min(pow(linear_pixel[x, y] + bloom_pixel[x, y] * bloom_strength, 1.0 / 2.2), 1.0) / (super_samples * super_samples)
+        pixel[i, j] = pow(tone(linear_pixel[i, j] + bloom_pixel[i, j] * bloom_strength), 1.0 / 2.2)
 
 
 def try_reset(t):
@@ -422,7 +442,7 @@ def try_reset(t):
 # Initialize the camera
 sample = 0
 t = 1
-focal_length[None] = 12.0
+focal_length[None] = 15.0
 last_camera_pos[2] = focal_length[None]
 camera_pos[2] = focal_length[None]
 
@@ -439,12 +459,14 @@ while True:
         sample = 0
         linear_pixel.fill(0)
         bloom_pixel.fill(0)
+        ray_count.fill(0)
+        errors.fill(0)
 
     print ("\033[A                             \033[A")
-    print(f"[{sample * (super_samples * super_samples)} spp]" )
+    print(f"[{sample} spp]" )
 
     sample += 1
-    trace(sample)
+    trace()
     t += 1
     gui.set_image(pixel)
     gui.show()
